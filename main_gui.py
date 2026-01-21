@@ -335,6 +335,29 @@ class TotalBattleBotApp(ctk.CTk):
 
         # Initial Load
         self.refresh_roster_list()
+        
+    def run_clan_analysis(self, auto=False):
+        """ 
+        Bridge function used by Automation. 
+        If auto=True, it runs logic + logs to Discord without rebuilding the GUI (thread-safe).
+        If auto=False, it runs the full GUI version.
+        """
+        if not auto:
+            self.run_clan_analysis_manual()
+            return
+
+        # --- AUTOMATION LOGIC (Thread Safe) ---
+        self.log("📊 Running Background Analysis...")
+        alerts = self.clan_manager.run_analysis(days_lookback=1)
+        
+        if alerts:
+            self.log(f"⚠️ Auto-Analysis found {len(alerts)} alerts.")
+            for a in alerts:
+                # Log specific details to Discord
+                msg = f"🚨 **Clan Alert**: [{a.get('type')}] {a.get('name')} - {a.get('desc')}"
+                self.send_discord_msg(msg)
+        else:
+            self.log("✅ Auto-Analysis: Roster is stable.")
 
     def run_clan_analysis_manual(self):
         # 1. Clear Alerts Box
@@ -974,7 +997,7 @@ class TotalBattleBotApp(ctk.CTk):
         pyautogui.moveTo(kill_spot.x, kill_spot.y, duration=0.2) 
         for _ in range(len(batch)):
             pyautogui.click() 
-            time.sleep(0.2) 
+            time.sleep(0.8) 
         time.sleep(0.5)
         return True
 
