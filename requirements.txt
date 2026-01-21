@@ -1,0 +1,9 @@
+customtkinter
+easyocr
+keyboard
+numpy
+opencv-python
+openpyxl
+pandas
+Pillow
+PyAutoGUI

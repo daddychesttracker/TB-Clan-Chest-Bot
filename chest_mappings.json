@@ -1,0 +1,282 @@
+{
+    "Bronze Chest | Bank": {
+        "key": "bank chest bronze",
+        "points": 2
+    },
+    "Epic Basilisk squad": {
+        "key": "other epics",
+        "points": 10
+    },
+    "Level 10 Citadel": {
+        "key": "citadel 10",
+        "points": 1
+    },
+    "Level 10 Crypt": {
+        "key": "common crypt 10",
+        "points": 2
+    },
+    "Level 20 Crypt": {
+        "key": "common crypt 20",
+        "points": 10
+    },
+    "Level 15 Crypt": {
+        "key": "common crypt 15",
+        "points": 5
+    },
+    "Level 10 rare Crypt": {
+        "key": "rare crypt 10",
+        "points": 1
+    },
+    "Level 15 rare Crypt": {
+        "key": "rare crypt 15",
+        "points": 5
+    },
+    "Level 20 rare Crypt": {
+        "key": "rare crypt 20",
+        "points": 10
+    },
+    "Level 25 rare Crypt": {
+        "key": "rare crypt 25",
+        "points": 30
+    },
+    "Level 30 rare Crypt": {
+        "key": "rare crypt 30",
+        "points": 60
+    },
+    "Level 15 Citadel": {
+        "key": "citadel 15",
+        "points": 5
+    },
+    "Level 15 epic Crypt": {
+        "key": "epic crypt 15",
+        "points": 15
+    },
+    "Level 20 epic Crypt": {
+        "key": "epic crypt 20",
+        "points": 25
+    },
+    "Level 25 epic Crypt": {
+        "key": "epic crypt 25",
+        "points": 40
+    },
+    "Level 30 epic Crypt": {
+        "key": "epic crypt 30",
+        "points": 75
+    },
+    "Level 16 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 5
+    },
+    "Level 17 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 5
+    },
+    "Level 20 Citadel": {
+        "key": "citadel 20",
+        "points": 10
+    },
+    "Level 25 Citadel": {
+        "key": "citadel 25",
+        "points": 30
+    },
+    "Level 25 Crypt": {
+        "key": "common crypt 25",
+        "points": 20
+    },
+    "Level 5 Crypt": {
+        "key": "common crypt 5",
+        "points": 1
+    },
+    "Precious Chest | Bank": {
+        "key": "bank chest precious",
+        "points": 30
+    },
+    "Wooden Chest | Bank": {
+        "key": "bank chest wooden",
+        "points": 1
+    },
+    "Union of Triumph personal reward": {
+        "key": "other other",
+        "points": 1
+    },
+    "Clan wealth": {
+        "key": "other other",
+        "points": 1
+    },
+    "Arachne Swarm Epic squad": {
+        "key": "other epics",
+        "points": 10
+    },
+    "Arena": {
+        "key": "other other",
+        "points": 2
+    },
+    "Authority Rush tournament": {
+        "key": "other other",
+        "points": 2
+    },
+    "Hermes' Store": {
+        "key": "other olympus",
+        "points": 10
+    },
+    "Level 10 Common Crypt": {
+        "key": "common crypt 10",
+        "points": 2
+    },
+    "Level 10 Tartaros Crypt": {
+        "key": "tartaros 10",
+        "points": 0
+    },
+    "Level 15 Tartaros Crypt": {
+        "key": "tartaros 15",
+        "points": 0
+    },
+    "Level 20 Tartaros Crypt": {
+        "key": "tartaros 20",
+        "points": 0
+    },
+    "Level 25 Tartaros Crypt": {
+        "key": "tartaros 25",
+        "points": 0
+    },
+    "Level 15 Common Crypt": {
+        "key": "common crypt 15",
+        "points": 0
+    },
+    "Level 20 Common Crypt": {
+        "key": "common crypt 20",
+        "points": 0
+    },
+    "Level 22 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 0
+    },
+    "Level 23 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 0
+    },
+    "Level 25 Common Crypt": {
+        "key": "common crypt 25",
+        "points": 0
+    },
+    "Level 30 Citadel": {
+        "key": "citadel 30",
+        "points": 0
+    },
+    "Level 35 epic Crypt": {
+        "key": "epic crypt 35",
+        "points": 0
+    },
+    "Level 5 Common Crypt": {
+        "key": "common crypt 5",
+        "points": 0
+    },
+    "Level 30 Tartaros Crypt": {
+        "key": "tartaros 30",
+        "points": 0
+    },
+    "Tartaros Crypt level 30": {
+        "key": "tartaros 30",
+        "points": 0
+    },
+    "Level 35 Tartaros Crypt": {
+        "key": "tartaros 35",
+        "points": 0
+    },
+    "Tartaros Crypt level 20": {
+        "key": "tartaros 20",
+        "points": 0
+    },
+    "Tartaros Crypt level 25": {
+        "key": "tartaros 25",
+        "points": 0
+    },
+    "Hermes Store": {
+        "key": "other olympus",
+        "points": 0
+    },
+    "Level 30-34 Vault of the Ancients": {
+        "key": "other other",
+        "points": 0
+    },
+    "Level 35-39 Vault of the Ancients": {
+        "key": "other other",
+        "points": 0
+    },
+    "Tartaros Crypt level 10": {
+        "key": "tartaros 10",
+        "points": 0
+    },
+    "Tartaros Crypt level 15": {
+        "key": "tartaros 15",
+        "points": 0
+    },
+    "Tartaros Crypt level 35": {
+        "key": "tartaros 35",
+        "points": 0
+    },
+    "Level 21 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 0
+    },
+    "Level 19 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 0
+    },
+    "Level 24 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 0
+    },
+    "Level 27 heroic Monster": {
+        "key": "heroic 26 - 30",
+        "points": 0
+    },
+    "Level 25-29 Vault of the Ancients": {
+        "key": "other other",
+        "points": 0
+    },
+    "Level 40-44 Vault of the Ancients": {
+        "key": "other other",
+        "points": 0
+    },
+    "Level 45 Vault of the Ancients": {
+        "key": "other other",
+        "points": 0
+    },
+    "Unknown": {
+        "key": "other other",
+        "points": 0
+    },
+    "Epic Ancient squad": {
+        "key": "other ancient",
+        "points": 0
+    },
+    "Event \"Trials of Olympus\"": {
+        "key": "other olympus",
+        "points": 0
+    },
+    "Golden Chest | Bank": {
+        "key": "bank chest golden",
+        "points": 0
+    },
+    "Level 25 heroic Monster": {
+        "key": "heroic 16 - 25",
+        "points": 0
+    },
+    "Rise of the Ancients event": {
+        "key": "other ancient",
+        "points": 0
+    },
+    "Mercenary Exchange": {
+        "key": "other other",
+        "points": 0
+    },
+    "Silver Chest | Bank": {
+        "key": "bank chest silver",
+        "points": 0
+    },
+    "Jormungandr Shop": {
+        "key": "other ragnarok",
+        "points": 0
+    }
+}
