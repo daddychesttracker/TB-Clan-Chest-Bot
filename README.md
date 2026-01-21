@@ -2,6 +2,11 @@ This works with browser and installed game. Requires resolution to be set at 108
 In the asset folder you need to replace check_profile.png with your own. (tbprofile_id.png is for a future update with profile switching if you have multiple accounts under one user). 
 Runs best when the counter account is set to soldier and is run from the installable version of the game, it can be run with the account set as a different rank but there may be some artifacts. 
 
+if you get an SSL error when trying to run, add this to imports in main_gui.py
+
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 
 1. Install requirements - pip install -r requirements.txt
 
