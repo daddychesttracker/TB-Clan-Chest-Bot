@@ -4,6 +4,8 @@ Runs best when the counter account is set to soldier and is run from the install
 
 if you get an SSL error when trying to run, add this to imports in main_gui.py
 
+added tesseract support, download the latest version before using. assumes installation location C:\Program Files\Tesseract-OCR\tesseract.exe
+
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
