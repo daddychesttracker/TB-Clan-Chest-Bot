@@ -981,7 +981,11 @@ class TotalBattleBotApp(ctk.CTk):
         except: return False
         if not buttons: return False
         buttons.sort(key=lambda b: b.top)
+        
+        # Take up to 4 buttons (or fewer if fewer exist)
         batch = buttons[:4]
+        
+        # 1. READ PHASE
         for btn in batch:
             left = int(btn.left - s["off_x"])
             top = int(btn.top - s["off_y"])
@@ -993,11 +997,18 @@ class TotalBattleBotApp(ctk.CTk):
                 text, _ = self.read_text_from_image(img, s["bw"], s["thresh"])
                 self.data_manager.parse_and_save(text)
             except: pass
-        kill_spot = pyautogui.center(batch[0])
-        pyautogui.moveTo(kill_spot.x, kill_spot.y, duration=0.2) 
-        for _ in range(len(batch)):
-            pyautogui.click() 
-            time.sleep(0.8) 
+            
+        # 2. CLICK PHASE
+        if batch:
+            # Move to the position of the first button
+            kill_spot = pyautogui.center(batch[0])
+            pyautogui.moveTo(kill_spot.x, kill_spot.y, duration=0.2) 
+            
+            # REVERTED: Only click as many times as buttons we actually found/read
+            for _ in range(len(batch)):
+                pyautogui.click() 
+                time.sleep(0.4) # Keep the slower speed
+                
         time.sleep(0.5)
         return True
 
