@@ -12,6 +12,7 @@ import re
 import urllib.request 
 from PIL import Image
 import easyocr
+import pytesseract  # <--- NEW: Re-added for Tesseract support
 
 from data_manager import DataManager
 from master_compiler import MasterCompiler
@@ -23,12 +24,17 @@ ctk.set_default_color_theme("blue")
 
 CONFIG_FILE = "vision_config.json"
 
+# --- CONFIGURATION: TESSERACT PATH ---
+# If your Tesseract is installed elsewhere, change this path!
+TESSERACT_PATH = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+
 class TotalBattleBotApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("v1.0 Total Battle Clan Manager")
+        self.title("v1.2 TB Clan Manager (Hybrid OCR)")
         self.geometry("1300x950")
-        self.attributes('-topmost', True)
+        self.attributes('-topmost', False) 
 
         self.data_manager = DataManager()
         self.clan_manager = ClanManager() 
@@ -37,8 +43,10 @@ class TotalBattleBotApp(ctk.CTk):
         self.reader = easyocr.Reader(['en'], gpu=False)
         print("✅ EasyOCR Ready.")
 
+        # Default Settings
         self.settings = {
             "mode": "chests",
+            "ocr_engine": "easyocr", # <--- NEW: Default Engine
             "min_score": 1000,
             "discord_webhook": "",
             "chests": {"off_x": 600, "off_y": 10, "w": 550, "h": 100, "thresh": 150, "bw": False},
@@ -56,13 +64,17 @@ class TotalBattleBotApp(ctk.CTk):
                 "drag_speed": 0.8,
                 "scroll_attempts": 15
             },
-            "event_thresholds": {}
+            "event_thresholds": {},
+            "auto_gift": {"enabled": False, "interval": "1", "start": "Now"},
+            "auto_roster": {"enabled": False, "interval": "1", "start": "Now"},
+            "auto_excel": {"enabled": False, "interval": "1"}
         }
         self.load_settings()
         
         self.is_running = False        
         self.is_auto_active = False    
         self.stop_requested = False    
+        self.automation_paused = False 
         
         self.captured_image = None 
         self.seen_player_names = set() 
@@ -81,8 +93,10 @@ class TotalBattleBotApp(ctk.CTk):
         keyboard.add_hotkey('f9', self.start_bot_safe)
         keyboard.add_hotkey('f10', self.stop_bot_safe)
 
+        # --- GUI LAYOUT ---
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
+        
         self.tabview = ctk.CTkTabview(self)
         self.tabview.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         
@@ -93,15 +107,77 @@ class TotalBattleBotApp(ctk.CTk):
         self.tab_manager = self.tabview.add("🗃️ Chest Manager")
         self.tab_calib = self.tabview.add("📏 Calibration")
 
+        self.mini_frame = ctk.CTkFrame(self)
+
         self.setup_dashboard()
         self.setup_automation()
         self.setup_event_manager()
         self.setup_clan_manager() 
         self.setup_chest_manager()
         self.setup_calibration()
+        self.setup_mini_mode() 
+
+        self.calc_next_runs()
 
         threading.Thread(target=self.scheduler_loop, daemon=True).start()
 
+    # =====================================================
+    # MINI MODE LOGIC
+    # =====================================================
+    def setup_mini_mode(self):
+        self.mini_frame.grid_columnconfigure(0, weight=1)
+        
+        btn_expand = ctk.CTkButton(self.mini_frame, text="↖️ Expand", width=60, height=20, fg_color="gray", command=self.toggle_mini_mode)
+        btn_expand.pack(anchor="ne", padx=5, pady=5)
+        
+        self.btn_start_mini = ctk.CTkButton(self.mini_frame, text="START (F9)", fg_color="green", command=self.start_bot)
+        self.btn_start_mini.pack(pady=5, padx=10, fill="x")
+        
+        self.btn_stop_mini = ctk.CTkButton(self.mini_frame, text="STOP (F10)", fg_color="red", state="disabled", command=self.stop_bot)
+        self.btn_stop_mini.pack(pady=5, padx=10, fill="x")
+        
+        self.btn_pause_mini = ctk.CTkButton(self.mini_frame, text="⏸️ Pause Auto", fg_color="#D97706", command=self.toggle_automation_pause)
+        self.btn_pause_mini.pack(pady=5, padx=10, fill="x")
+
+        ctk.CTkLabel(self.mini_frame, text="Task:").pack(pady=(5,0))
+        self.task_menu_mini = ctk.CTkOptionMenu(self.mini_frame, values=["Gift Muncher", "Roster Scan", "Event Scanner"], command=self.sync_task_selection)
+        self.task_menu_mini.pack(pady=2)
+        
+        ctk.CTkLabel(self.mini_frame, text="Event:").pack(pady=(5,0))
+        self.event_menu_mini = ctk.CTkOptionMenu(self.mini_frame, values=["None"] + self.event_list, variable=self.selected_event)
+        self.event_menu_mini.pack(pady=2)
+
+        self.lbl_mini_log = ctk.CTkLabel(self.mini_frame, text="Ready", text_color="gray", wraplength=280)
+        self.lbl_mini_log.pack(pady=10, padx=5)
+
+    def toggle_mini_mode(self):
+        if self.tabview.winfo_viewable():
+            self.tabview.grid_remove()
+            self.geometry("300x350")
+            self.mini_frame.grid(row=0, column=0, sticky="nsew")
+            self.attributes('-topmost', True) 
+        else:
+            self.mini_frame.grid_remove()
+            self.geometry("1300x950")
+            self.tabview.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+            self.attributes('-topmost', False)
+
+    def sync_task_selection(self, value):
+        self.task_menu.set(value)
+        self.task_menu_mini.set(value)
+
+    def toggle_automation_pause(self):
+        self.automation_paused = not self.automation_paused
+        txt = "▶️ Resume Auto" if self.automation_paused else "⏸️ Pause Auto"
+        col = "green" if self.automation_paused else "#D97706" 
+        self.btn_pause.configure(text=txt, fg_color=col)
+        self.btn_pause_mini.configure(text=txt, fg_color=col)
+        state = "PAUSED" if self.automation_paused else "ACTIVE"
+        self.log(f"⏯️ Automation Timers: {state}")
+
+    # =====================================================
+    # EXISTING SETUP & HELPERS
+    # =====================================================
     def send_discord_msg(self, message):
         url = self.settings.get("discord_webhook", "").strip()
         if not url: return
@@ -111,117 +187,49 @@ class TotalBattleBotApp(ctk.CTk):
             urllib.request.urlopen(req)
         except Exception as e: print(f"Discord Error: {e}")
 
-    # =====================================================
-    # ROBUSTNESS & NAVIGATION
-    # =====================================================
-    
-    def check_connection_loss(self):
-        try:
-            if pyautogui.locateOnScreen("assets/connection_lost_check.png", confidence=0.8):
-                self.log("⚠️ Connection Lost detected!")
-                retry_btn = pyautogui.locateOnScreen("assets/connect_retry_btn.png", confidence=0.8)
-                if retry_btn:
-                    self.log("🔄 Clicking Retry...")
-                    pyautogui.click(pyautogui.center(retry_btn))
-                    time.sleep(10)
-                    return True
-        except: pass
-        return False
-
-    def handle_interruptions(self):
-        if self.check_connection_loss(): time.sleep(2)
-        try:
-            while pyautogui.locateOnScreen("assets/check_loading1.png", confidence=0.8):
-                self.log("⏳ Waiting for Loading 1...")
-                time.sleep(1)
-        except: pass
-        try:
-            while pyautogui.locateOnScreen("assets/check_loading2.png", confidence=0.8):
-                self.log("⏳ Waiting for Loading 2...")
-                time.sleep(1)
-        except: pass
-        try:
-            if pyautogui.locateOnScreen("assets/check_shop_btn.png", confidence=0.8):
-                self.log("🛍️ Shop detected. Closing in 3s...")
-                time.sleep(3)
-                close_btn = pyautogui.locateOnScreen("assets/close_shop_btn.png", confidence=0.8)
-                if close_btn:
-                    target = pyautogui.center(close_btn)
-                    pyautogui.moveTo(target.x, target.y, duration=0.5)
-                    pyautogui.click()
-                    self.log("✅ Shop Closed.")
-                    time.sleep(1)
-        except: pass
-
     def verify_profile(self):
-        """Checks profile and switches account using BLIND DRAG with CALIBRATION."""
         self.log("🔍 Verifying Profile...")
-        
-        # 1. Is the correct profile already active?
         try:
-            if pyautogui.locateOnScreen("assets/check_profile.png", confidence=0.8):
-                return True
+            if pyautogui.locateOnScreen("assets/check_profile.png", confidence=0.8): return True
         except: pass
-
-        # 2. Is the game loaded?
         try:
             if not pyautogui.locateOnScreen("assets/btn_clan.png", confidence=0.8):
                 self.log("❌ Game UI not found (btn_clan missing).")
                 return False
         except: return False
-
-        # 3. Wrong Profile Detected - Initiate Switch
         self.log("⚠️ Wrong Profile! Attempting to switch...")
-        
-        # Load custom calibration for drag
         s_acc = self.settings.get("accounts", {"drag_start_y": 450, "drag_end_y": 150, "drag_speed": 0.8, "scroll_attempts": 15})
         drag_x_offset = s_acc.get("drag_start_x", 0)
         drag_start_offset = s_acc.get("drag_start_y", 450)
         drag_end_offset = s_acc.get("drag_end_y", 150)
         drag_speed = s_acc.get("drag_speed", 0.8)
         max_attempts = int(s_acc.get("scroll_attempts", 15))
-
         try:
-            # A. Click Account Button
             acc_btn = pyautogui.locateOnScreen("assets/acc_btn.png", confidence=0.8)
             if acc_btn:
                 pyautogui.click(pyautogui.center(acc_btn))
-                # MOVE MOUSE AWAY to prevent hover effect from blocking image match
                 pyautogui.moveTo(10, 10) 
                 self.log("🖱️ Clicked Account Button. Waiting 3s...")
                 time.sleep(3.0)
             else:
                 self.log("❌ Cannot find Account Button.")
                 return False
-
-            # B. Find Anchor (Header) - Retry Loop
             anchor_pos = None
-            for _ in range(5): # Try 5 times
+            for _ in range(5): 
                 acc_anchor = pyautogui.locateOnScreen("assets/acc_anchor.png", confidence=0.8)
                 if acc_anchor:
                     anchor_pos = pyautogui.center(acc_anchor)
                     break
                 time.sleep(0.5)
-            
-            # C. Fallback if Anchor Missing (Use Button Position)
             if not anchor_pos:
-                self.log("⚠️ Anchor missing! Using Fallback.")
-                # Fallback: Assume list is 200px below the button we just clicked
                 if acc_btn:
                     btn_pos = pyautogui.center(acc_btn)
                     anchor_pos = pyautogui.Point(btn_pos.x, btn_pos.y + 200)
-                else:
-                    self.log("❌ Critical: No reference point found.")
-                    return False
-            
-            # Use Calibrated Offsets relative to whatever anchor we found
+                else: return False
             drag_x = anchor_pos.x + drag_x_offset
             drag_start_y = anchor_pos.y + drag_start_offset
             drag_end_y = anchor_pos.y + drag_end_offset
-            
             found_target = False
-            self.log(f"📜 Scanning Profile (X:{drag_x_offset} | Y:{drag_start_offset}->{drag_end_offset})...")
-            
             for i in range(max_attempts): 
                 target = pyautogui.locateOnScreen("assets/tbprofile_id.png", confidence=0.8)
                 if target:
@@ -229,16 +237,13 @@ class TotalBattleBotApp(ctk.CTk):
                     pyautogui.click(pyautogui.center(target))
                     found_target = True
                     break
-                
-                # Perform Blind Drag
                 self.log(f"   ⬇️ Dragging List ({i+1}/{max_attempts})...")
                 pyautogui.moveTo(drag_x, drag_start_y)
                 pyautogui.mouseDown()
                 time.sleep(0.2)
-                pyautogui.moveTo(drag_x, drag_end_y, duration=drag_speed) # Pull up
+                pyautogui.moveTo(drag_x, drag_end_y, duration=drag_speed)
                 pyautogui.mouseUp()
-                time.sleep(1.5) # Wait for animation
-
+                time.sleep(1.5)
             if found_target:
                 self.log("⏳ Waiting 60s for game reload...")
                 time.sleep(60)
@@ -247,30 +252,33 @@ class TotalBattleBotApp(ctk.CTk):
                 self.log("❌ Could not find 'tbprofile_id' in list.")
                 self.send_discord_msg("🚨 **Error**: Could not find Target Profile.")
                 return False
-
         except Exception as e:
             self.log(f"❌ Profile Switch Error: {e}")
             return False
-
-    # =====================================================
-    # UI SETUP
-    # =====================================================
+            
     def setup_dashboard(self):
         self.tab_dash.grid_columnconfigure(1, weight=1)
         self.tab_dash.grid_rowconfigure(0, weight=1)
         sidebar = ctk.CTkFrame(self.tab_dash, width=250, corner_radius=0)
         sidebar.grid(row=0, column=0, sticky="nsew")
         ctk.CTkLabel(sidebar, text="TB CLAN MANAGER", font=("Arial", 20, "bold")).pack(pady=20)
+        
         self.btn_start = ctk.CTkButton(sidebar, text="START (F9)", fg_color="green", command=self.start_bot)
         self.btn_start.pack(pady=10, padx=20)
         self.btn_stop = ctk.CTkButton(sidebar, text="STOP (F10)", fg_color="red", state="disabled", command=self.stop_bot)
         self.btn_stop.pack(pady=10, padx=20)
+        self.btn_pause = ctk.CTkButton(sidebar, text="⏸️ Pause Auto", fg_color="#D97706", command=self.toggle_automation_pause)
+        self.btn_pause.pack(pady=10, padx=20)
+        ctk.CTkButton(sidebar, text="↘️ Mini Mode", fg_color="gray", command=self.toggle_mini_mode).pack(pady=10, padx=20)
+
         ctk.CTkLabel(sidebar, text="Select Task:").pack(pady=(20,0))
-        self.task_menu = ctk.CTkOptionMenu(sidebar, values=["Gift Muncher", "Roster Scan", "Event Scanner"])
+        self.task_menu = ctk.CTkOptionMenu(sidebar, values=["Gift Muncher", "Roster Scan", "Event Scanner"], command=self.sync_task_selection)
         self.task_menu.pack(pady=5)
+        
         ctk.CTkLabel(sidebar, text="Select Event Tag:").pack(pady=(20,0))
         self.event_menu = ctk.CTkOptionMenu(sidebar, values=["None"] + self.event_list, variable=self.selected_event)
         self.event_menu.pack(pady=5)
+        
         def run_master_update_manual():
             if self.is_running or self.is_auto_active:
                 self.log("⚠️ Bot is busy.")
@@ -282,223 +290,156 @@ class TotalBattleBotApp(ctk.CTk):
         self.log_box.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
 
     def setup_clan_manager(self):
-        # Configure Grid: 3 Main Sections
         self.tab_clan.grid_columnconfigure(0, weight=1)
-        self.tab_clan.grid_rowconfigure(1, weight=1) # Alerts (Small)
-        self.tab_clan.grid_rowconfigure(2, weight=3) # Verified Roster (Large)
-        self.tab_clan.grid_rowconfigure(3, weight=2) # Unmatched (Medium)
-
-        # --- HEADER & CONTROLS ---
+        self.tab_clan.grid_rowconfigure(1, weight=1) 
+        self.tab_clan.grid_rowconfigure(2, weight=3) 
+        self.tab_clan.grid_rowconfigure(3, weight=2) 
         top_frame = ctk.CTkFrame(self.tab_clan)
         top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
-        
         ctk.CTkLabel(top_frame, text="🛡️ Clan Management", font=("Arial", 18, "bold")).pack(side="left", padx=10)
-        
-        # Strict Filter Toggle
         self.var_strict_filter = ctk.BooleanVar(value=True)
         def toggle_strict():
             self.data_manager.strict_mode = self.var_strict_filter.get()
             status = "ON" if self.var_strict_filter.get() else "OFF (Debug Mode)"
             self.log(f"🔧 Strict Name Filter: {status}")
-            # Refresh lists to show/hide debug names immediately
             self.refresh_roster_list()
-        
         cb_strict = ctk.CTkCheckBox(top_frame, text="Strict Name Filter (Uncheck to fix typos)", 
                                   variable=self.var_strict_filter, command=toggle_strict)
         cb_strict.pack(side="right", padx=10)
-
-        # --- SECTION 1: AUTOMATED ALERTS ---
         f_alerts = ctk.CTkFrame(self.tab_clan)
         f_alerts.grid(row=1, column=0, sticky="nsew", padx=10, pady=2)
-        
         head_alert = ctk.CTkFrame(f_alerts, fg_color="transparent")
         head_alert.pack(fill="x", padx=5, pady=2)
         ctk.CTkLabel(head_alert, text="⚠️ Automated Checks (Leavers / Name Changes)", font=("Arial", 12, "bold")).pack(side="left")
         ctk.CTkButton(head_alert, text="▶️ Run Checks", height=20, width=100, command=self.run_clan_analysis_manual).pack(side="right")
-
         self.scroll_alerts = ctk.CTkScrollableFrame(f_alerts, height=80) 
         self.scroll_alerts.pack(expand=True, fill="both", padx=5, pady=2)
-
-        # --- SECTION 2: VERIFIED ROSTER ---
         ctk.CTkLabel(self.tab_clan, text="✅ Verified Roster (In Snapshot)", font=("Arial", 12, "bold")).grid(row=2, column=0, sticky="nw", padx=20, pady=(5,0))
         self.scroll_roster = ctk.CTkScrollableFrame(self.tab_clan)
         self.scroll_roster.grid(row=2, column=0, sticky="nsew", padx=10, pady=(25, 5))
-
-        # --- SECTION 3: UNMATCHED NAMES ---
         mid_frame = ctk.CTkFrame(self.tab_clan, fg_color="transparent")
         mid_frame.grid(row=3, column=0, sticky="nw", padx=10, pady=0)
         ctk.CTkLabel(mid_frame, text="❓ Unmatched Names (Chest Log / Debug)", font=("Arial", 12, "bold")).pack(side="left", padx=10)
         ctk.CTkButton(mid_frame, text="🔄 Refresh Lists", height=20, width=100, command=self.refresh_roster_list).pack(side="right")
-
         self.scroll_unmatched = ctk.CTkScrollableFrame(self.tab_clan)
         self.scroll_unmatched.grid(row=3, column=0, sticky="nsew", padx=10, pady=(30, 5))
-
-        # Initial Load
         self.refresh_roster_list()
-        
-    def run_clan_analysis(self, auto=False):
-        """ 
-        Bridge function used by Automation. 
-        If auto=True, it runs logic + logs to Discord without rebuilding the GUI (thread-safe).
-        If auto=False, it runs the full GUI version.
-        """
-        if not auto:
-            self.run_clan_analysis_manual()
-            return
-
-        # --- AUTOMATION LOGIC (Thread Safe) ---
-        self.log("📊 Running Background Analysis...")
-        alerts = self.clan_manager.run_analysis(days_lookback=1)
-        
-        if alerts:
-            self.log(f"⚠️ Auto-Analysis found {len(alerts)} alerts.")
-            for a in alerts:
-                # Log specific details to Discord
-                msg = f"🚨 **Clan Alert**: [{a.get('type')}] {a.get('name')} - {a.get('desc')}"
-                self.send_discord_msg(msg)
-        else:
-            self.log("✅ Auto-Analysis: Roster is stable.")
 
     def run_clan_analysis_manual(self):
-        # 1. Clear Alerts Box
         for w in self.scroll_alerts.winfo_children(): w.destroy()
-        
-        # 2. Run Analysis Logic
         alerts = self.clan_manager.run_analysis(days_lookback=1)
-        
         if not alerts:
             ctk.CTkLabel(self.scroll_alerts, text="✅ No alerts found. Roster looks stable.").pack(pady=5)
         else:
             for alert in alerts:
                 self.create_alert_card(alert)
-        
-        # 3. Refresh lists in case analysis auto-added people
         self.refresh_roster_list()
+
+    def run_clan_analysis(self, auto=False):
+        if not auto:
+            self.run_clan_analysis_manual()
+            return
+        self.log("📊 Running Background Analysis...")
+        alerts = self.clan_manager.run_analysis(days_lookback=1)
+        if alerts:
+            self.log(f"⚠️ Auto-Analysis found {len(alerts)} alerts.")
+            for a in alerts:
+                msg = f"🚨 **Clan Alert**: [{a.get('type')}] {a.get('name')} - {a.get('desc')}"
+                self.send_discord_msg(msg)
+        else:
+            self.log("✅ Auto-Analysis: Roster is stable.")
 
     def create_alert_card(self, alert):
         card = ctk.CTkFrame(self.scroll_alerts)
         card.pack(fill="x", pady=2)
-        
         atype = alert.get('type', 'INFO')
         color = "orange"
         if atype == "LEAVER": color = "red"
         elif atype == "NEW_MEMBER": color = "green"
-        
         ctk.CTkLabel(card, text=f"[{atype}] {alert.get('name', '?')}", text_color=color, font=("Arial", 11, "bold")).pack(side="left", padx=5)
         ctk.CTkLabel(card, text=alert.get('desc', ''), font=("Arial", 11)).pack(side="left", padx=5)
-
-        # Quick Action Buttons inside the alert
         if atype == "LEAVER":
             def confirm_leaver():
                 self.clan_manager.action_remove_leaver(alert['name'])
-                self.run_clan_analysis_manual() # Refresh
+                self.run_clan_analysis_manual() 
             ctk.CTkButton(card, text="Remove", fg_color="red", width=60, height=20, command=confirm_leaver).pack(side="right", padx=5)
 
     def refresh_roster_list(self):
-        # 1. Clear Both Lists
         for w in self.scroll_roster.winfo_children(): w.destroy()
         for w in self.scroll_unmatched.winfo_children(): w.destroy()
-        
-        # 2. Populate Verified Roster (Top List)
         snapshot = self.clan_manager.snapshot
         sorted_names = sorted(snapshot.keys(), key=lambda x: x.lower())
         for name in sorted_names:
             self.create_roster_row(self.scroll_roster, name, snapshot[name], is_verified=True)
-
-        # 3. Populate Unmatched List (Bottom List)
-        # Get names from Chest Log + Debug Log
         unmatched_chests = self.clan_manager.get_unmatched_chest_players()
         debug_roster = self.clan_manager.get_debug_roster_names()
-        
-        # Combine and remove anyone who is already verified
         combined = set(unmatched_chests)
-        if not self.var_strict_filter.get(): # If filter OFF, show debug names
+        if not self.var_strict_filter.get(): 
             combined.update(debug_roster)
-            
         final_unmatched = sorted([n for n in combined if n not in snapshot and n not in self.clan_manager.mappings])
-        
         for name in final_unmatched:
-            # We don't have might data for chest-only players, so show "?"
             self.create_roster_row(self.scroll_unmatched, name, {"might": "?"}, is_verified=False)
 
     def create_roster_row(self, parent, name, data, is_verified):
         row = ctk.CTkFrame(parent)
         row.pack(fill="x", pady=2)
-        
-        # Name Label
         lbl_name = ctk.CTkLabel(row, text=name, width=200, anchor="w", font=("Arial", 12, "bold"))
         lbl_name.pack(side="left", padx=10)
-        
-        # Might Info
-        might_val = data.get('might', 0)
-        lbl_info = ctk.CTkLabel(row, text=f"Might: {might_val}", width=120, text_color="gray")
+        lbl_info = ctk.CTkLabel(row, text=f"Might: {data.get('might', 0)}", width=120, text_color="gray")
         lbl_info.pack(side="left")
-        
         actions = ctk.CTkFrame(row, fg_color="transparent")
         actions.pack(side="right", padx=5)
 
-        # --- SHARED ACTIONS ---
-
         def on_delete():
-            # Adds to Ignore List
             self.clan_manager.action_ignore_player(name)
             row.destroy()
 
         def on_merge():
-            # Turns label into dropdown
             lbl_name.destroy()
-            # Options: All verified players (except self)
             options = sorted([n for n in self.clan_manager.snapshot.keys() if n != name])
-            
             combo = ctk.CTkComboBox(row, values=options, width=180)
             combo.set("Merge into...")
             combo.pack(side="left", padx=10, before=lbl_info)
-            
             actions.destroy()
             act_save = ctk.CTkFrame(row, fg_color="transparent")
             act_save.pack(side="right", padx=5)
-            
             def save_merge():
                 target = combo.get()
                 if target and target in options:
-                    self.clan_manager.action_merge(name, target) # Map name -> target
+                    self.clan_manager.action_merge(name, target) 
                     self.refresh_roster_list()
-            
             ctk.CTkButton(act_save, text="Confirm", width=60, fg_color="blue", command=save_merge).pack(side="left", padx=2)
             ctk.CTkButton(act_save, text="X", width=30, fg_color="gray", command=self.refresh_roster_list).pack(side="left", padx=2)
 
         def on_rename():
-            # Turns label into entry box
             lbl_name.destroy()
             ent = ctk.CTkEntry(row, width=150)
             ent.insert(0, name)
             ent.pack(side="left", padx=10, before=lbl_info)
-            
             actions.destroy()
             act_save = ctk.CTkFrame(row, fg_color="transparent")
             act_save.pack(side="right", padx=5)
-            
             def save_rename():
                 new_n = ent.get().strip()
                 if new_n:
                     self.clan_manager.action_confirm_name_change(name, new_n)
                     self.refresh_roster_list()
-            
             ctk.CTkButton(act_save, text="Save", width=50, fg_color="green", command=save_rename).pack(side="left", padx=2)
             ctk.CTkButton(act_save, text="X", width=30, fg_color="gray", command=self.refresh_roster_list).pack(side="left", padx=2)
 
-        # --- BUTTON RENDERING ---
         if is_verified:
-            # Verified: Rename, Merge, Delete
             ctk.CTkButton(actions, text="✏️", width=30, fg_color="#444", command=on_rename).pack(side="left", padx=2)
-            ctk.CTkButton(actions, text="🔗", width=30, fg_color="blue", command=on_merge).pack(side="left", padx=2) # Added Merge Icon
+            ctk.CTkButton(actions, text="🔗", width=30, fg_color="blue", command=on_merge).pack(side="left", padx=2) 
             ctk.CTkButton(actions, text="🗑️", width=30, fg_color="red", command=on_delete).pack(side="left", padx=2)
         else:
-            # Unmatched: Merge, Ignore
             ctk.CTkButton(actions, text="🔗 Merge", width=70, fg_color="blue", command=on_merge).pack(side="left", padx=2)
             ctk.CTkButton(actions, text="🚫 Ignore", width=70, fg_color="red", command=on_delete).pack(side="left", padx=2)
 
     def setup_automation(self):
+        s_gift = self.settings.get("auto_gift", {"enabled": False, "interval": "1", "start": "Now"})
+        s_roster = self.settings.get("auto_roster", {"enabled": False, "interval": "1", "start": "Now"})
+        s_excel = self.settings.get("auto_excel", {"enabled": False, "interval": "1"})
+
         self.tab_auto.grid_columnconfigure(0, weight=1)
         frame_notif = ctk.CTkFrame(self.tab_auto)
         frame_notif.pack(fill="x", padx=10, pady=10)
@@ -512,47 +453,58 @@ class TotalBattleBotApp(ctk.CTk):
             self.log("✅ Webhook Saved.")
             self.send_discord_msg("✅ Total Battle Bot: Test Notification Successful.")
         ctk.CTkButton(frame_notif, text="Save & Test", command=save_webhook, fg_color="#5865F2").pack(pady=10)
+        
+        # AUTO GIFT
         frame_gift = ctk.CTkFrame(self.tab_auto)
         frame_gift.pack(fill="x", padx=10, pady=10)
         ctk.CTkLabel(frame_gift, text="🎁 Auto Gift Muncher", font=("Arial", 14, "bold")).pack(pady=5)
-        self.var_auto_gift = ctk.BooleanVar(value=False)
+        self.var_auto_gift = ctk.BooleanVar(value=s_gift["enabled"])
         ctk.CTkCheckBox(frame_gift, text="Enable", variable=self.var_auto_gift, command=self.calc_next_runs).pack(pady=5)
         f_g_ctrl = ctk.CTkFrame(frame_gift, fg_color="transparent")
         f_g_ctrl.pack()
         ctk.CTkLabel(f_g_ctrl, text="Every:").pack(side="left", padx=5)
         self.opt_gift_int = ctk.CTkOptionMenu(f_g_ctrl, values=[str(i) for i in range(1, 25)], width=60, command=lambda _: self.calc_next_runs())
+        self.opt_gift_int.set(s_gift["interval"])
         self.opt_gift_int.pack(side="left", padx=5)
         ctk.CTkLabel(f_g_ctrl, text="Hours").pack(side="left", padx=5)
         ctk.CTkLabel(f_g_ctrl, text="Start At:").pack(side="left", padx=15)
         self.opt_gift_start = ctk.CTkOptionMenu(f_g_ctrl, values=["Now", ":00 (Top of Hour)", ":30 (Half Past)"], command=lambda _: self.calc_next_runs())
+        self.opt_gift_start.set(s_gift["start"])
         self.opt_gift_start.pack(side="left", padx=5)
         self.lbl_next_gift = ctk.CTkLabel(frame_gift, text="Next Run: Disabled", text_color="gray")
         self.lbl_next_gift.pack(pady=5)
+        
+        # AUTO ROSTER
         frame_roster = ctk.CTkFrame(self.tab_auto)
         frame_roster.pack(fill="x", padx=10, pady=10)
         ctk.CTkLabel(frame_roster, text="📜 Auto Roster Scan", font=("Arial", 14, "bold")).pack(pady=5)
-        self.var_auto_roster = ctk.BooleanVar(value=False)
+        self.var_auto_roster = ctk.BooleanVar(value=s_roster["enabled"])
         ctk.CTkCheckBox(frame_roster, text="Enable", variable=self.var_auto_roster, command=self.calc_next_runs).pack(pady=5)
         f_r_ctrl = ctk.CTkFrame(frame_roster, fg_color="transparent")
         f_r_ctrl.pack()
         ctk.CTkLabel(f_r_ctrl, text="Every:").pack(side="left", padx=5)
         self.opt_roster_int = ctk.CTkOptionMenu(f_r_ctrl, values=[str(i) for i in range(1, 25)], width=60, command=lambda _: self.calc_next_runs())
+        self.opt_roster_int.set(s_roster["interval"])
         self.opt_roster_int.pack(side="left", padx=5)
         ctk.CTkLabel(f_r_ctrl, text="Hours").pack(side="left", padx=5)
         ctk.CTkLabel(f_r_ctrl, text="Start At:").pack(side="left", padx=15)
         self.opt_roster_start = ctk.CTkOptionMenu(f_r_ctrl, values=["Now", ":00 (Top of Hour)", ":30 (Half Past)"], command=lambda _: self.calc_next_runs())
+        self.opt_roster_start.set(s_roster["start"])
         self.opt_roster_start.pack(side="left", padx=5)
         self.lbl_next_roster = ctk.CTkLabel(frame_roster, text="Next Run: Disabled", text_color="gray")
         self.lbl_next_roster.pack(pady=5)
+        
+        # AUTO EXCEL
         frame_excel = ctk.CTkFrame(self.tab_auto)
         frame_excel.pack(fill="x", padx=10, pady=10)
         ctk.CTkLabel(frame_excel, text="📊 Auto Excel Update", font=("Arial", 14, "bold")).pack(pady=5)
-        self.var_auto_excel = ctk.BooleanVar(value=False)
+        self.var_auto_excel = ctk.BooleanVar(value=s_excel["enabled"])
         ctk.CTkCheckBox(frame_excel, text="Enable", variable=self.var_auto_excel, command=self.calc_next_runs).pack(pady=5)
         f_e_ctrl = ctk.CTkFrame(frame_excel, fg_color="transparent")
         f_e_ctrl.pack()
         ctk.CTkLabel(f_e_ctrl, text="Every:").pack(side="left", padx=5)
         self.opt_excel_int = ctk.CTkOptionMenu(f_e_ctrl, values=["1", "2", "4", "6", "12", "24"], width=60, command=lambda _: self.calc_next_runs())
+        self.opt_excel_int.set(s_excel["interval"])
         self.opt_excel_int.pack(side="left", padx=5)
         ctk.CTkLabel(f_e_ctrl, text="Hours").pack(side="left", padx=5)
         self.lbl_next_excel = ctk.CTkLabel(frame_excel, text="Next Run: Disabled", text_color="gray")
@@ -675,26 +627,25 @@ class TotalBattleBotApp(ctk.CTk):
         self.tab_calib.grid_columnconfigure(1, weight=1)
         controls = ctk.CTkFrame(self.tab_calib, width=300)
         controls.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        self.calib_mode = ctk.CTkOptionMenu(controls, values=["chests", "roster", "events", "accounts"], command=self.switch_calib_mode) # Added "accounts"
+        self.calib_mode = ctk.CTkOptionMenu(controls, values=["chests", "roster", "events", "accounts"], command=self.switch_calib_mode) 
         self.calib_mode.set(self.settings["mode"])
         self.calib_mode.pack(pady=5)
         self.sliders = {}
-        def add_slider(key, label, min_v, max_v):
-            ctk.CTkLabel(controls, text=label).pack(pady=(2,0))
-            s = ctk.CTkSlider(controls, from_=min_v, to=max_v, command=lambda v: self.update_preview())
-            s.pack(pady=2)
-            self.sliders[key] = s
-        
         self.controls_frame = controls
         self.dynamic_sliders = []
         
-        # --- FIX: Create sliders FIRST ---
         self.slider_thresh = ctk.CTkSlider(controls, from_=0, to=255, command=lambda v: self.update_preview())
         self.slider_thresh.pack(pady=2)
         self.check_bw = ctk.CTkCheckBox(controls, text="B/W Filter", command=self.update_preview)
         self.check_bw.pack(pady=10)
         
-        # --- THEN refresh them (populating values) ---
+        # --- NEW: OCR Engine Toggle ---
+        ctk.CTkLabel(controls, text="OCR Engine:").pack(pady=(10, 0))
+        self.ocr_menu = ctk.CTkOptionMenu(controls, values=["easyocr", "tesseract"], command=self.save_settings_no_log)
+        self.ocr_menu.set(self.settings.get("ocr_engine", "easyocr"))
+        self.ocr_menu.pack(pady=5)
+        # ------------------------------
+        
         self.refresh_sliders()
 
         ctk.CTkButton(controls, text="📸 Capture", command=self.capture_screen).pack(pady=10)
@@ -707,29 +658,36 @@ class TotalBattleBotApp(ctk.CTk):
         self.lbl_ocr.pack(pady=10)
 
     def read_text_from_image(self, img_array, use_bw=False, thresh_val=150):
+        # 1. Image Pre-Processing (Shared by both engines)
         try:
-            # 1. UPSCALE (Critical for small game text)
             scale = 3
             h, w = img_array.shape[:2]
-            # Resize 3x bigger with smooth interpolation
             img_array = cv2.resize(img_array, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC)
-
-            # 2. GRAYSCALE (Standard best practice)
-            # We convert to gray to simplify data, but we keep the "shades" of gray
             gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-
-            # 3. OPTIONAL B/W FILTER
-            # Only runs if you check the box in the GUI (good for very low contrast text)
+            
+            # Use B/W if selected
             if use_bw: 
                 _, final_img = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
             else: 
                 final_img = gray
-            
-            # 4. READ
-            result_list = self.reader.readtext(final_img, detail=0, paragraph=True)
-            text = " ".join(result_list)
-            return text.strip(), final_img
-        except: return "", img_array
+
+            # 2. Engine Selection
+            engine = self.settings.get("ocr_engine", "easyocr")
+
+            if engine == "tesseract":
+                # Tesseract Logic
+                # Use --psm 6 (Assume a single uniform block of text)
+                text = pytesseract.image_to_string(final_img, config='--psm 6')
+                return text.strip(), final_img
+            else:
+                # EasyOCR Logic
+                result_list = self.reader.readtext(final_img, detail=0, paragraph=True)
+                text = " ".join(result_list)
+                return text.strip(), final_img
+                
+        except Exception as e: 
+            print(f"OCR Error ({self.settings.get('ocr_engine')}): {e}")
+            return "", img_array
 
     def load_settings(self):
         if os.path.exists(CONFIG_FILE):
@@ -738,14 +696,21 @@ class TotalBattleBotApp(ctk.CTk):
                     self.settings.update(json.load(f))
             except: pass
 
-    def save_settings(self):
+    def save_settings_no_log(self, _=None):
+        # Helper to save without spamming log (used by dropdowns)
+        self.save_settings(silent=True)
+
+    def save_settings(self, silent=False):
         mode = self.calib_mode.get()
         self.settings["mode"] = mode
         
-        # Save based on mode
+        # Save OCR Engine choice
+        if hasattr(self, 'ocr_menu'):
+            self.settings["ocr_engine"] = self.ocr_menu.get()
+
         if mode == "accounts":
             s = self.settings.setdefault("accounts", {})
-            s["drag_start_x"] = int(self.sliders["drag_start_x"].get()) # NEW X
+            s["drag_start_x"] = int(self.sliders["drag_start_x"].get()) 
             s["drag_start_y"] = int(self.sliders["drag_start_y"].get())
             s["drag_end_y"] = int(self.sliders["drag_end_y"].get())
             s["drag_speed"] = float(self.sliders["drag_speed"].get())
@@ -765,18 +730,17 @@ class TotalBattleBotApp(ctk.CTk):
                 s["split_x"] = int(self.sliders["split_x"].get())
 
         with open(CONFIG_FILE, "w") as f: json.dump(self.settings, f)
-        self.log(f"✅ Settings saved for {mode}.")
+        if not silent:
+            self.log(f"✅ Settings saved for {mode} (Engine: {self.settings['ocr_engine']}).")
 
     def switch_calib_mode(self, mode):
         self.settings["mode"] = mode
         self.refresh_sliders()
 
     def refresh_sliders(self):
-        # Clear old sliders
         for s in self.dynamic_sliders: s.destroy()
         self.dynamic_sliders = []
         self.sliders = {}
-
         mode = self.settings["mode"]
         vals = self.settings.get(mode, {})
 
@@ -790,7 +754,7 @@ class TotalBattleBotApp(ctk.CTk):
             self.dynamic_sliders.extend([l, s])
 
         if mode == "accounts":
-            add_s("drag_start_x", "Drag X Offset", -500, 500, 0) # NEW SLIDER
+            add_s("drag_start_x", "Drag X Offset", -500, 500, 0)
             add_s("drag_start_y", "Drag Start Y (Down)", 100, 800, 450)
             add_s("drag_end_y", "Drag End Y (Up)", 0, 600, 150)
             add_s("drag_speed", "Drag Speed (sec)", 0.1, 2.0, 0.8)
@@ -800,13 +764,11 @@ class TotalBattleBotApp(ctk.CTk):
             add_s("off_y", "Offset Y", -100, 500, vals.get("off_y", 0))
             add_s("w", "Width", 50, 1000, vals.get("w", 100))
             add_s("h", "Height", 10, 200, vals.get("h", 50))
-            
             if mode in ["roster", "events"]:
                 add_s("margin_top", "Top Limit", 0, 500, vals.get("margin_top", 200))
                 add_s("margin_bot", "Bottom Limit", 500, 1080, vals.get("margin_bot", 800))
             if mode == "events":
                 add_s("split_x", "Split X", 0, 800, vals.get("split_x", 400))
-            
             self.slider_thresh.set(vals.get("thresh", 150))
             if vals.get("bw", False): self.check_bw.select()
             else: self.check_bw.deselect()
@@ -822,11 +784,18 @@ class TotalBattleBotApp(ctk.CTk):
     def update_preview(self):
         if self.captured_image is None: return
         mode = self.calib_mode.get()
+        img_np = np.array(self.captured_image)
         
-        # --- NEW: ACCOUNT CALIBRATION PREVIEW ---
-        if mode == "accounts":
-            img_np = np.array(self.captured_image)
+        # FIX: APPLY B/W FILTER TO DISPLAY
+        if self.check_bw.get():
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+            thresh_val = int(self.slider_thresh.get())
+            _, binary = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
+            display_img = cv2.cvtColor(binary, cv2.COLOR_GRAY2RGB)
+        else:
             display_img = img_np.copy()
+
+        if mode == "accounts":
             anchor_img = "assets/acc_anchor.png"
             if os.path.exists(anchor_img):
                 img_gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
@@ -836,33 +805,24 @@ class TotalBattleBotApp(ctk.CTk):
                 target_pt = None
                 for pt in zip(*loc[::-1]): 
                     target_pt = pt
-                    break # Take first
-                
+                    break 
                 if target_pt:
                     ax, ay = target_pt
                     center_x = ax + (template.shape[1] // 2)
                     center_y = ay + (template.shape[0] // 2)
-                    
-                    # Get Slider Values
-                    x_offset = int(self.sliders["drag_start_x"].get()) # NEW
+                    x_offset = int(self.sliders["drag_start_x"].get()) 
                     start_y = center_y + int(self.sliders["drag_start_y"].get())
                     end_y = center_y + int(self.sliders["drag_end_y"].get())
-                    
-                    # Apply X Offset
                     drag_x = center_x + x_offset
-                    
-                    # Draw Arrow (With X offset applied)
                     cv2.arrowedLine(display_img, (drag_x, start_y), (drag_x, end_y), (255, 0, 0), 5, tipLength=0.3)
-                    cv2.circle(display_img, (drag_x, start_y), 10, (0, 0, 255), -1) # Red Start
-                    cv2.circle(display_img, (drag_x, end_y), 10, (0, 255, 0), -1)   # Green End
-                    
+                    cv2.circle(display_img, (drag_x, start_y), 10, (0, 0, 255), -1) 
+                    cv2.circle(display_img, (drag_x, end_y), 10, (0, 255, 0), -1)   
             pil_img = Image.fromarray(display_img)
             ratio = 600 / display_img.shape[0]
             new_w = int(display_img.shape[1] * ratio)
             self.lbl_image.configure(image=ctk.CTkImage(pil_img, size=(new_w, 600)), text="")
             return
 
-        # --- EXISTING PREVIEW LOGIC ---
         if mode == "chests": anchor_img = "assets/btn_claim.png"
         elif mode == "roster": anchor_img = "assets/anchor_roster.png"
         elif mode == "events": anchor_img = "assets/anchor_event.png"
@@ -870,11 +830,10 @@ class TotalBattleBotApp(ctk.CTk):
         if not os.path.exists(anchor_img): 
             self.lbl_image.configure(text=f"Missing {anchor_img}")
             return
-        img_np = np.array(self.captured_image)
-        display_img = img_np.copy() 
-        img_gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        img_gray_orig = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         template = cv2.imread(anchor_img, 0)
-        res = cv2.matchTemplate(img_gray, template, cv2.TM_CCOEFF_NORMED)
+        res = cv2.matchTemplate(img_gray_orig, template, cv2.TM_CCOEFF_NORMED)
         loc = np.where(res >= 0.8)
         margin_top = int(self.sliders["margin_top"].get()) if mode != "chests" else 0
         margin_bot = int(self.sliders["margin_bot"].get()) if mode != "chests" else 9999
@@ -896,7 +855,7 @@ class TotalBattleBotApp(ctk.CTk):
             h = int(self.sliders["h"].get())
             if mode == "chests": box_x, box_y = ax - off_x, ay - off_y
             else: box_x, box_y = ax + off_x, ay + off_y
-            cv2.rectangle(display_img, (box_x, box_y), (box_x+w, box_y+h), (0, 255, 255), 2)
+            cv2.rectangle(display_img, (box_x, box_y), (box_x+w, box_y+h), (255, 255, 0), 2)
             if mode == "events":
                 split_x = int(self.sliders["split_x"].get())
                 abs_split = box_x + split_x
@@ -910,6 +869,7 @@ class TotalBattleBotApp(ctk.CTk):
                 crop = img_np[box_y:box_y+h, box_x:box_x+w]
                 text, _ = self.read_text_from_image(crop, self.check_bw.get(), int(self.slider_thresh.get()))
                 self.lbl_ocr.configure(text=f"READ: {text}")
+
         pil_img = Image.fromarray(display_img)
         ratio = 600 / display_img.shape[0]
         new_w = int(display_img.shape[1] * ratio)
@@ -957,23 +917,49 @@ class TotalBattleBotApp(ctk.CTk):
         except: pass
         
     def close_menu_action(self, task_name="action"):
-        """ Checks for the close button, clicks it, and sends a success notification. """
         self.log("🔙 Closing Clan Menu...")
         try:
             time.sleep(0.5)
-            # Looks for the X button to close the window
             btn = pyautogui.locateOnScreen("assets/close_clan_menu.png", confidence=0.8)
             if btn:
                 pyautogui.click(pyautogui.center(btn))
-                time.sleep(1.0) # Wait for menu to close animation
-                
-                # --- NEW: Send Specific Success Message to Discord ---
+                time.sleep(1.0) 
                 success_msg = f"✅ Bot Success: clan menu closed {task_name} complete"
-                self.log(success_msg) # Log locally
-                self.send_discord_msg(success_msg) # Force send to Discord
+                self.log(success_msg) 
+                self.send_discord_msg(success_msg) 
             else:
                 self.log("⚠️ 'close_clan_menu' button not found.")
         except: pass
+
+    def handle_interruptions(self):
+        try:
+            if pyautogui.locateOnScreen("assets/connection_lost_check.png", confidence=0.8):
+                self.log("⚠️ Connection Lost detected!")
+                retry_btn = pyautogui.locateOnScreen("assets/connect_retry_btn.png", confidence=0.8)
+                if retry_btn:
+                    pyautogui.click(pyautogui.center(retry_btn))
+                    time.sleep(10)
+        except: pass
+        try:
+            if pyautogui.locateOnScreen("assets/check_shop_btn.png", confidence=0.8):
+                close_btn = pyautogui.locateOnScreen("assets/close_shop_btn.png", confidence=0.8)
+                if close_btn:
+                    pyautogui.click(pyautogui.center(close_btn))
+                    time.sleep(1)
+        except: pass
+
+    def check_connection_loss(self):
+        try:
+            if pyautogui.locateOnScreen("assets/connection_lost_check.png", confidence=0.8):
+                self.log("⚠️ Connection Lost detected!")
+                retry_btn = pyautogui.locateOnScreen("assets/connect_retry_btn.png", confidence=0.8)
+                if retry_btn:
+                    self.log("🔄 Clicking Retry...")
+                    pyautogui.click(pyautogui.center(retry_btn))
+                    time.sleep(10)
+                    return True
+        except: pass
+        return False
 
     def process_gifts(self):
         s = self.settings["chests"]
@@ -982,10 +968,7 @@ class TotalBattleBotApp(ctk.CTk):
         if not buttons: return False
         buttons.sort(key=lambda b: b.top)
         
-        # Take up to 4 buttons (or fewer if fewer exist)
         batch = buttons[:4]
-        
-        # 1. READ PHASE
         for btn in batch:
             left = int(btn.left - s["off_x"])
             top = int(btn.top - s["off_y"])
@@ -998,17 +981,13 @@ class TotalBattleBotApp(ctk.CTk):
                 self.data_manager.parse_and_save(text)
             except: pass
             
-        # 2. CLICK PHASE
         if batch:
-            # Move to the position of the first button
             kill_spot = pyautogui.center(batch[0])
             pyautogui.moveTo(kill_spot.x, kill_spot.y, duration=0.2) 
-            
-            # REVERTED: Only click as many times as buttons we actually found/read
+            # SAFE METHOD: Click only detected count
             for _ in range(len(batch)):
                 pyautogui.click() 
-                time.sleep(0.4) # Keep the slower speed
-                
+                time.sleep(0.3) 
         time.sleep(0.5)
         return True
 
@@ -1095,8 +1074,6 @@ class TotalBattleBotApp(ctk.CTk):
                     else: break
                 else: break
             time.sleep(1)
-        
-        # --- NEW: CLOSE MENU AFTER COMPLETION ---
         if not self.stop_requested:
             self.close_menu_action(task_name="gift count")
 
@@ -1104,56 +1081,35 @@ class TotalBattleBotApp(ctk.CTk):
         if not self.verify_profile():
             self.stop_bot()
             return
-
-        # --- DYNAMIC SAFE SPOT (RIGHT BIASED) ---
         s = self.settings["events"] if is_event else self.settings["roster"]
-        
-        # Default fallback (shifted right to 700)
         safe_x = 700 
         safe_y = int((s.get("margin_top", 200) + s.get("margin_bot", 800)) / 2)
-
-        # Try to find an anchor to set the perfect position
         anchor_img = "assets/anchor_event.png" if is_event else "assets/anchor_roster.png"
         try:
             loc = pyautogui.locateOnScreen(anchor_img, confidence=0.8)
             if loc:
-                # X = Anchor + Offset + Half Width + 100px (Nudge Right)
                 safe_x = int(loc.left + s["off_x"] + (s["w"] / 2) + 100)
         except: pass
-
         no_data_streak = 0
         while not self.stop_requested:
             if self.check_connection_loss():
                 time.sleep(5)
                 continue
-
             if self.process_generic_list(is_event): 
                 no_data_streak = 0
             else: 
                 no_data_streak += 1
-            
             if no_data_streak >= 3: break
-            
-            # --- MOVEMENT FIX ---
             pyautogui.moveTo(safe_x, safe_y)
             pyautogui.click()
-            # --------------------
-
             for _ in range(3): 
                 pyautogui.scroll(-2000)
                 time.sleep(0.05)
             time.sleep(0.8)
-        
-        # --- NEW: CLOSE MENU ACTION ---
         if not self.stop_requested:
             self.close_menu_action(task_name="roster scan")
-        
-        # --- AUTOMATION CHAINING ---
         if not is_event and self.is_auto_active:
-            self.log("🔄 Auto-Triggering Clan Analysis...")
             self.run_clan_analysis(auto=True)
-            
-            self.log("🔄 Auto-Triggering Master Excel Update...")
             self.run_excel_logic()
 
     def run_excel_logic(self):
@@ -1175,8 +1131,13 @@ class TotalBattleBotApp(ctk.CTk):
             return
         self.is_running = True
         self.stop_requested = False
+        
+        # Update Both UIs
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
+        self.btn_start_mini.configure(state="disabled")
+        self.btn_stop_mini.configure(state="normal")
+        
         self.seen_player_names = set()
         self.seen_player_numbers = set()
         task = self.task_menu.get()
@@ -1189,8 +1150,13 @@ class TotalBattleBotApp(ctk.CTk):
     def stop_bot(self):
         self.stop_requested = True
         self.is_running = False
+        
+        # Update Both UIs
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
+        self.btn_start_mini.configure(state="normal")
+        self.btn_stop_mini.configure(state="disabled")
+        
         self.log("🛑 Stopping...")
 
     def bot_thread_manual(self):
@@ -1209,14 +1175,29 @@ class TotalBattleBotApp(ctk.CTk):
         self.stop_bot()
 
     def log(self, msg):
-        self.log_box.insert("end", f"[{time.strftime('%H:%M')}] {msg}\n")
+        ts = time.strftime('%H:%M')
+        full_msg = f"[{ts}] {msg}\n"
+        
+        # 1. Update Full Log
+        self.log_box.insert("end", full_msg)
         self.log_box.see("end")
+        
+        # 2. Update Mini Log (Shortened)
+        short_msg = msg if len(msg) < 40 else msg[:37] + "..."
+        self.lbl_mini_log.configure(text=f"{ts}: {short_msg}")
         
         if "❌" in msg or "Error" in msg:
             self.send_discord_msg(f"🚨 **Bot Error**: {msg}")
 
     def calc_next_runs(self):
         now = datetime.datetime.now()
+        
+        # SAVE SETTINGS
+        self.settings["auto_gift"] = {"enabled": self.var_auto_gift.get(), "interval": self.opt_gift_int.get(), "start": self.opt_gift_start.get()}
+        self.settings["auto_roster"] = {"enabled": self.var_auto_roster.get(), "interval": self.opt_roster_int.get(), "start": self.opt_roster_start.get()}
+        self.settings["auto_excel"] = {"enabled": self.var_auto_excel.get(), "interval": self.opt_excel_int.get()}
+        with open(CONFIG_FILE, "w") as f: json.dump(self.settings, f)
+
         def get_next_time(interval_hours, start_mode):
             interval = int(interval_hours)
             target = now
@@ -1226,6 +1207,7 @@ class TotalBattleBotApp(ctk.CTk):
                 target = now.replace(minute=30, second=0, microsecond=0)
                 if target < now: target += datetime.timedelta(hours=1)
             return target
+            
         if self.var_auto_gift.get():
             if not self.next_gift_run or self.next_gift_run < now:
                 self.next_gift_run = get_next_time(self.opt_gift_int.get(), self.opt_gift_start.get())
@@ -1233,6 +1215,7 @@ class TotalBattleBotApp(ctk.CTk):
         else:
             self.next_gift_run = None
             self.lbl_next_gift.configure(text="Next Run: Disabled", text_color="gray")
+            
         if self.var_auto_roster.get():
             if not self.next_roster_run or self.next_roster_run < now:
                 self.next_roster_run = get_next_time(self.opt_roster_int.get(), self.opt_roster_start.get())
@@ -1240,6 +1223,7 @@ class TotalBattleBotApp(ctk.CTk):
         else:
             self.next_roster_run = None
             self.lbl_next_roster.configure(text="Next Run: Disabled", text_color="gray")
+            
         if self.var_auto_excel.get():
             if not self.next_excel_run or self.next_excel_run < now:
                 self.next_excel_run = now + datetime.timedelta(hours=int(self.opt_excel_int.get()))
@@ -1251,8 +1235,10 @@ class TotalBattleBotApp(ctk.CTk):
     def scheduler_loop(self):
         while True:
             time.sleep(5)
+            if self.automation_paused: continue
             now = datetime.datetime.now()
             if self.is_running or self.is_auto_active: continue
+            
             if self.next_gift_run and now >= self.next_gift_run:
                 self.trigger_auto_task("gift")
                 self.next_gift_run += datetime.timedelta(hours=int(self.opt_gift_int.get()))
