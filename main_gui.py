@@ -12,41 +12,36 @@ import re
 import urllib.request 
 from PIL import Image
 import easyocr
-import pytesseract  # <--- NEW: Re-added for Tesseract support
+import pytesseract
 
 from data_manager import DataManager
 from master_compiler import MasterCompiler
 from chest_mapper import ChestMapper
 from clan_manager import ClanManager 
+import traceback
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 CONFIG_FILE = "vision_config.json"
-
-# --- CONFIGURATION: TESSERACT PATH ---
-# If your Tesseract is installed elsewhere, change this path!
 TESSERACT_PATH = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 class TotalBattleBotApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("v1.2 TB Clan Manager (Hybrid OCR)")
+        self.title("v1.3 TB Clan Manager (GPU & Scroll Fix)")
         self.geometry("1300x950")
         self.attributes('-topmost', False) 
 
         self.data_manager = DataManager()
         self.clan_manager = ClanManager() 
         
-        print("⚡ Loading EasyOCR Model...")
-        self.reader = easyocr.Reader(['en'], gpu=False)
-        print("✅ EasyOCR Ready.")
-
-        # Default Settings
+        # Load Settings First to check GPU preference
         self.settings = {
             "mode": "chests",
-            "ocr_engine": "easyocr", # <--- NEW: Default Engine
+            "ocr_engine": "easyocr", 
+            "use_gpu": False, # <--- NEW: Default GPU Setting
             "min_score": 1000,
             "discord_webhook": "",
             "chests": {"off_x": 600, "off_y": 10, "w": 550, "h": 100, "thresh": 150, "bw": False},
@@ -58,11 +53,9 @@ class TotalBattleBotApp(ctk.CTk):
                 "split_x": 500
             },
             "accounts": { 
-                "drag_start_x": 0,
-                "drag_start_y": 450,
-                "drag_end_y": 150,
-                "drag_speed": 0.8,
-                "scroll_attempts": 15
+                "drag_start_x": 0,    # Now used as "Hover X Offset"
+                "drag_start_y": 450,  # Now used as "Hover Y Offset"
+                "scroll_attempts": 5
             },
             "event_thresholds": {},
             "auto_gift": {"enabled": False, "interval": "1", "start": "Now"},
@@ -70,7 +63,10 @@ class TotalBattleBotApp(ctk.CTk):
             "auto_excel": {"enabled": False, "interval": "1"}
         }
         self.load_settings()
-        
+
+        # Initialize OCR based on settings
+        self.init_easyocr()
+
         self.is_running = False        
         self.is_auto_active = False    
         self.stop_requested = False    
@@ -120,6 +116,19 @@ class TotalBattleBotApp(ctk.CTk):
         self.calc_next_runs()
 
         threading.Thread(target=self.scheduler_loop, daemon=True).start()
+
+    def init_easyocr(self):
+        use_gpu = self.settings.get("use_gpu", False)
+        print(f"⚡ Loading EasyOCR Model (GPU={use_gpu})...")
+        try:
+            self.reader = easyocr.Reader(['en'], gpu=use_gpu)
+            print("✅ EasyOCR Ready.")
+        except Exception as e:
+            print(f"❌ EasyOCR Init Failed: {e}")
+            if use_gpu:
+                print("⚠️ Fallback: Trying CPU mode...")
+                self.settings["use_gpu"] = False
+                self.init_easyocr()
 
     # =====================================================
     # MINI MODE LOGIC
@@ -176,7 +185,7 @@ class TotalBattleBotApp(ctk.CTk):
         self.log(f"⏯️ Automation Timers: {state}")
 
     # =====================================================
-    # EXISTING SETUP & HELPERS
+    # MAIN LOGIC & HELPERS
     # =====================================================
     def send_discord_msg(self, message):
         url = self.settings.get("discord_webhook", "").strip()
@@ -187,75 +196,159 @@ class TotalBattleBotApp(ctk.CTk):
             urllib.request.urlopen(req)
         except Exception as e: print(f"Discord Error: {e}")
 
-    def verify_profile(self):
-        self.log("🔍 Verifying Profile...")
+    def handle_interruptions(self):
+        """Checks for connection lost, shop popups, or daily bonuses."""
         try:
-            if pyautogui.locateOnScreen("assets/check_profile.png", confidence=0.8): return True
+            if pyautogui.locateOnScreen("assets/connection_lost_check.png", confidence=0.8):
+                self.log("⚠️ Connection Lost detected! Retrying...")
+                retry_btn = pyautogui.locateOnScreen("assets/connect_retry_btn.png", confidence=0.8)
+                if retry_btn:
+                    pyautogui.click(pyautogui.center(retry_btn))
+                    time.sleep(10)
         except: pass
+        
+        try:
+            # Check for generic "Close" X buttons (Shop, Daily, etc)
+            if pyautogui.locateOnScreen("assets/check_shop_btn.png", confidence=0.8):
+                self.log("ℹ️ Shop/Popup detected. Closing...")
+                close_btn = pyautogui.locateOnScreen("assets/close_shop_btn.png", confidence=0.8)
+                if close_btn:
+                    pyautogui.click(pyautogui.center(close_btn))
+                    time.sleep(1)
+        except: pass
+
+    def verify_profile(self):
+        """
+        Checks profile and switches account using SCROLL.
+        RESTARTS logic (handle_interruptions) after switch.
+        """
+        self.log("🔍 Verifying Profile...")
+        
+        # 0. DIAGNOSTIC: TEST IMAGE LOAD
+        img_path = "assets/tbprofile_id.png"
+        if not os.path.exists(img_path):
+            self.log(f"❌ CRITICAL: '{img_path}' is missing!")
+            return False
+        
+        # 1. Is the correct profile already active?
+        try:
+            if pyautogui.locateOnScreen("assets/check_profile.png", confidence=0.8):
+                return True
+        except: pass
+
+        # 2. Is the game loaded?
         try:
             if not pyautogui.locateOnScreen("assets/btn_clan.png", confidence=0.8):
                 self.log("❌ Game UI not found (btn_clan missing).")
                 return False
         except: return False
-        self.log("⚠️ Wrong Profile! Attempting to switch...")
-        s_acc = self.settings.get("accounts", {"drag_start_y": 450, "drag_end_y": 150, "drag_speed": 0.8, "scroll_attempts": 15})
-        drag_x_offset = s_acc.get("drag_start_x", 0)
-        drag_start_offset = s_acc.get("drag_start_y", 450)
-        drag_end_offset = s_acc.get("drag_end_y", 150)
-        drag_speed = s_acc.get("drag_speed", 0.8)
-        max_attempts = int(s_acc.get("scroll_attempts", 15))
+
+        # 3. Wrong Profile Detected - Initiate Switch
+        self.log("⚠️ Wrong Profile! Opening Account Menu...")
+        
+        s_acc = self.settings.get("accounts", {})
+        hover_x_offset = int(s_acc.get("drag_start_x", 0))
+        hover_y_offset = int(s_acc.get("drag_start_y", 450)) 
+        max_attempts = int(s_acc.get("scroll_attempts", 5))
+
         try:
+            # A. Open Account Menu
             acc_btn = pyautogui.locateOnScreen("assets/acc_btn.png", confidence=0.8)
             if acc_btn:
-                pyautogui.click(pyautogui.center(acc_btn))
-                pyautogui.moveTo(10, 10) 
-                self.log("🖱️ Clicked Account Button. Waiting 3s...")
-                time.sleep(3.0)
+                center = pyautogui.center(acc_btn)
+                pyautogui.moveTo(center.x, center.y, duration=0.5)
+                pyautogui.click()
+                self.log("⏳ Waiting 2s for menu...")
+                time.sleep(2.0) 
             else:
                 self.log("❌ Cannot find Account Button.")
                 return False
+
+            # B. Establish Anchor Point
             anchor_pos = None
-            for _ in range(5): 
-                acc_anchor = pyautogui.locateOnScreen("assets/acc_anchor.png", confidence=0.8)
-                if acc_anchor:
-                    anchor_pos = pyautogui.center(acc_anchor)
-                    break
-                time.sleep(0.5)
+            acc_anchor = pyautogui.locateOnScreen("assets/acc_anchor.png", confidence=0.8)
+            if acc_anchor:
+                anchor_pos = pyautogui.center(acc_anchor)
+            
             if not anchor_pos:
-                if acc_btn:
-                    btn_pos = pyautogui.center(acc_btn)
-                    anchor_pos = pyautogui.Point(btn_pos.x, btn_pos.y + 200)
-                else: return False
-            drag_x = anchor_pos.x + drag_x_offset
-            drag_start_y = anchor_pos.y + drag_start_offset
-            drag_end_y = anchor_pos.y + drag_end_offset
+                self.log("⚠️ Anchor hidden. Using Button position.")
+                btn_pos = pyautogui.center(acc_btn)
+                anchor_pos = pyautogui.Point(btn_pos.x, btn_pos.y + 200)
+            
+            # C. Calculate Safe Hover Position
+            hover_x = int(anchor_pos.x + hover_x_offset)
+            hover_y = int(anchor_pos.y + hover_y_offset)
+
+            # D. START SCAN -> SCROLL LOOP
             found_target = False
-            for i in range(max_attempts): 
-                target = pyautogui.locateOnScreen("assets/tbprofile_id.png", confidence=0.8)
-                if target:
-                    self.log("✅ Target Profile Found! Clicking...")
-                    pyautogui.click(pyautogui.center(target))
-                    found_target = True
-                    break
-                self.log(f"   ⬇️ Dragging List ({i+1}/{max_attempts})...")
-                pyautogui.moveTo(drag_x, drag_start_y)
-                pyautogui.mouseDown()
+            
+            # Initial positioning
+            pyautogui.moveTo(hover_x, hover_y, duration=0.5)
+
+            for i in range(max_attempts):
+                self.log(f"🔎 Scan {i+1}/{max_attempts}...")
+                
+                # --- STEP 1: SCAN ---
+                try:
+                    target = pyautogui.locateOnScreen(img_path, confidence=0.8)
+                    
+                    if target:
+                        self.log("✅ Target Profile Found! Clicking...")
+                        center_target = pyautogui.center(target)
+                        pyautogui.moveTo(center_target.x, center_target.y, duration=0.5)
+                        pyautogui.click()
+                        
+                        # --- CONFIRMATION ---
+                        self.log("⏳ Waiting for Confirmation...")
+                        time.sleep(1.5) 
+                        try:
+                            confirm_btn = pyautogui.locateOnScreen("assets/acc_confirm.png", confidence=0.8)
+                            if confirm_btn:
+                                self.log("✅ Confirming Switch...")
+                                center_conf = pyautogui.center(confirm_btn)
+                                pyautogui.moveTo(center_conf.x, center_conf.y, duration=0.5)
+                                pyautogui.click()
+                        except: pass
+                        # --------------------
+
+                        found_target = True
+                        break 
+
+                except Exception as inner_e:
+                    # Silence scan errors
+                    pass
+                
+                # --- STEP 2: SCROLL ---
+                self.log("   Not found. Scrolling...")
+                
+                pyautogui.moveTo(hover_x, hover_y)
+                pyautogui.click() # Focus
                 time.sleep(0.2)
-                pyautogui.moveTo(drag_x, drag_end_y, duration=drag_speed)
-                pyautogui.mouseUp()
-                time.sleep(1.5)
+                
+                for _ in range(5):
+                    pyautogui.scroll(-200) 
+                    time.sleep(0.05)
+                
+                time.sleep(1.0) 
+
+            # E. RESULT & RESTART LOGIC
             if found_target:
                 self.log("⏳ Waiting 60s for game reload...")
                 time.sleep(60)
+                
+                self.log("🔄 Performing Post-Load Checks...")
+                self.handle_interruptions() # Close shops/popups
+                
+                # Recursive check to ensure we are actually ready
                 return self.verify_profile()
             else:
-                self.log("❌ Could not find 'tbprofile_id' in list.")
-                self.send_discord_msg("🚨 **Error**: Could not find Target Profile.")
+                self.log("❌ Target 'tbprofile_id' not found.")
                 return False
+
         except Exception as e:
             self.log(f"❌ Profile Switch Error: {e}")
             return False
-            
+
     def setup_dashboard(self):
         self.tab_dash.grid_columnconfigure(1, weight=1)
         self.tab_dash.grid_rowconfigure(0, weight=1)
@@ -639,12 +732,16 @@ class TotalBattleBotApp(ctk.CTk):
         self.check_bw = ctk.CTkCheckBox(controls, text="B/W Filter", command=self.update_preview)
         self.check_bw.pack(pady=10)
         
-        # --- NEW: OCR Engine Toggle ---
+        # --- GPU & OCR SETTINGS ---
         ctk.CTkLabel(controls, text="OCR Engine:").pack(pady=(10, 0))
         self.ocr_menu = ctk.CTkOptionMenu(controls, values=["easyocr", "tesseract"], command=self.save_settings_no_log)
         self.ocr_menu.set(self.settings.get("ocr_engine", "easyocr"))
         self.ocr_menu.pack(pady=5)
-        # ------------------------------
+        
+        self.check_gpu = ctk.CTkCheckBox(controls, text="⚡ Use GPU (NVIDIA)", command=self.save_settings_no_log)
+        if self.settings.get("use_gpu", False): self.check_gpu.select()
+        self.check_gpu.pack(pady=5)
+        # --------------------------
         
         self.refresh_sliders()
 
@@ -658,29 +755,21 @@ class TotalBattleBotApp(ctk.CTk):
         self.lbl_ocr.pack(pady=10)
 
     def read_text_from_image(self, img_array, use_bw=False, thresh_val=150):
-        # 1. Image Pre-Processing (Shared by both engines)
         try:
             scale = 3
             h, w = img_array.shape[:2]
             img_array = cv2.resize(img_array, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC)
             gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-            
-            # Use B/W if selected
             if use_bw: 
                 _, final_img = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
             else: 
                 final_img = gray
 
-            # 2. Engine Selection
             engine = self.settings.get("ocr_engine", "easyocr")
-
             if engine == "tesseract":
-                # Tesseract Logic
-                # Use --psm 6 (Assume a single uniform block of text)
                 text = pytesseract.image_to_string(final_img, config='--psm 6')
                 return text.strip(), final_img
             else:
-                # EasyOCR Logic
                 result_list = self.reader.readtext(final_img, detail=0, paragraph=True)
                 text = " ".join(result_list)
                 return text.strip(), final_img
@@ -697,23 +786,27 @@ class TotalBattleBotApp(ctk.CTk):
             except: pass
 
     def save_settings_no_log(self, _=None):
-        # Helper to save without spamming log (used by dropdowns)
         self.save_settings(silent=True)
 
     def save_settings(self, silent=False):
         mode = self.calib_mode.get()
         self.settings["mode"] = mode
         
-        # Save OCR Engine choice
         if hasattr(self, 'ocr_menu'):
-            self.settings["ocr_engine"] = self.ocr_menu.get()
+            new_engine = self.ocr_menu.get()
+            new_gpu = bool(self.check_gpu.get())
+            
+            # Detect changes to restart model
+            if new_gpu != self.settings.get("use_gpu", False):
+                self.settings["use_gpu"] = new_gpu
+                if not silent: self.init_easyocr()
+            
+            self.settings["ocr_engine"] = new_engine
 
         if mode == "accounts":
             s = self.settings.setdefault("accounts", {})
             s["drag_start_x"] = int(self.sliders["drag_start_x"].get()) 
             s["drag_start_y"] = int(self.sliders["drag_start_y"].get())
-            s["drag_end_y"] = int(self.sliders["drag_end_y"].get())
-            s["drag_speed"] = float(self.sliders["drag_speed"].get())
             s["scroll_attempts"] = int(self.sliders["scroll_attempts"].get())
         else:
             s = self.settings[mode]
@@ -731,7 +824,7 @@ class TotalBattleBotApp(ctk.CTk):
 
         with open(CONFIG_FILE, "w") as f: json.dump(self.settings, f)
         if not silent:
-            self.log(f"✅ Settings saved for {mode} (Engine: {self.settings['ocr_engine']}).")
+            self.log(f"✅ Settings saved for {mode}.")
 
     def switch_calib_mode(self, mode):
         self.settings["mode"] = mode
@@ -754,10 +847,9 @@ class TotalBattleBotApp(ctk.CTk):
             self.dynamic_sliders.extend([l, s])
 
         if mode == "accounts":
-            add_s("drag_start_x", "Drag X Offset", -500, 500, 0)
-            add_s("drag_start_y", "Drag Start Y (Down)", 100, 800, 450)
-            add_s("drag_end_y", "Drag End Y (Up)", 0, 600, 150)
-            add_s("drag_speed", "Drag Speed (sec)", 0.1, 2.0, 0.8)
+            # UPDATED SLIDERS FOR SCROLL LOGIC
+            add_s("drag_start_x", "Hover Offset X", -500, 500, 0)
+            add_s("drag_start_y", "Hover Offset Y (Down)", 100, 800, 450)
             add_s("scroll_attempts", "Scroll Attempts", 1, 30, 15)
         else:
             add_s("off_x", "Offset X", -500, 1000, vals.get("off_x", 0))
@@ -786,7 +878,6 @@ class TotalBattleBotApp(ctk.CTk):
         mode = self.calib_mode.get()
         img_np = np.array(self.captured_image)
         
-        # FIX: APPLY B/W FILTER TO DISPLAY
         if self.check_bw.get():
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             thresh_val = int(self.slider_thresh.get())
@@ -812,11 +903,11 @@ class TotalBattleBotApp(ctk.CTk):
                     center_y = ay + (template.shape[0] // 2)
                     x_offset = int(self.sliders["drag_start_x"].get()) 
                     start_y = center_y + int(self.sliders["drag_start_y"].get())
-                    end_y = center_y + int(self.sliders["drag_end_y"].get())
-                    drag_x = center_x + x_offset
-                    cv2.arrowedLine(display_img, (drag_x, start_y), (drag_x, end_y), (255, 0, 0), 5, tipLength=0.3)
-                    cv2.circle(display_img, (drag_x, start_y), 10, (0, 0, 255), -1) 
-                    cv2.circle(display_img, (drag_x, end_y), 10, (0, 255, 0), -1)   
+                    
+                    hover_x = center_x + x_offset
+                    cv2.circle(display_img, (hover_x, start_y), 15, (0, 255, 0), 2)
+                    cv2.putText(display_img, "SCROLL HERE", (hover_x - 40, start_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
             pil_img = Image.fromarray(display_img)
             ratio = 600 / display_img.shape[0]
             new_w = int(display_img.shape[1] * ratio)
@@ -931,23 +1022,6 @@ class TotalBattleBotApp(ctk.CTk):
                 self.log("⚠️ 'close_clan_menu' button not found.")
         except: pass
 
-    def handle_interruptions(self):
-        try:
-            if pyautogui.locateOnScreen("assets/connection_lost_check.png", confidence=0.8):
-                self.log("⚠️ Connection Lost detected!")
-                retry_btn = pyautogui.locateOnScreen("assets/connect_retry_btn.png", confidence=0.8)
-                if retry_btn:
-                    pyautogui.click(pyautogui.center(retry_btn))
-                    time.sleep(10)
-        except: pass
-        try:
-            if pyautogui.locateOnScreen("assets/check_shop_btn.png", confidence=0.8):
-                close_btn = pyautogui.locateOnScreen("assets/close_shop_btn.png", confidence=0.8)
-                if close_btn:
-                    pyautogui.click(pyautogui.center(close_btn))
-                    time.sleep(1)
-        except: pass
-
     def check_connection_loss(self):
         try:
             if pyautogui.locateOnScreen("assets/connection_lost_check.png", confidence=0.8):
@@ -984,7 +1058,6 @@ class TotalBattleBotApp(ctk.CTk):
         if batch:
             kill_spot = pyautogui.center(batch[0])
             pyautogui.moveTo(kill_spot.x, kill_spot.y, duration=0.2) 
-            # SAFE METHOD: Click only detected count
             for _ in range(len(batch)):
                 pyautogui.click() 
                 time.sleep(0.3) 
@@ -1132,7 +1205,6 @@ class TotalBattleBotApp(ctk.CTk):
         self.is_running = True
         self.stop_requested = False
         
-        # Update Both UIs
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         self.btn_start_mini.configure(state="disabled")
@@ -1151,7 +1223,6 @@ class TotalBattleBotApp(ctk.CTk):
         self.stop_requested = True
         self.is_running = False
         
-        # Update Both UIs
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
         self.btn_start_mini.configure(state="normal")
@@ -1178,11 +1249,9 @@ class TotalBattleBotApp(ctk.CTk):
         ts = time.strftime('%H:%M')
         full_msg = f"[{ts}] {msg}\n"
         
-        # 1. Update Full Log
         self.log_box.insert("end", full_msg)
         self.log_box.see("end")
         
-        # 2. Update Mini Log (Shortened)
         short_msg = msg if len(msg) < 40 else msg[:37] + "..."
         self.lbl_mini_log.configure(text=f"{ts}: {short_msg}")
         
@@ -1192,7 +1261,6 @@ class TotalBattleBotApp(ctk.CTk):
     def calc_next_runs(self):
         now = datetime.datetime.now()
         
-        # SAVE SETTINGS
         self.settings["auto_gift"] = {"enabled": self.var_auto_gift.get(), "interval": self.opt_gift_int.get(), "start": self.opt_gift_start.get()}
         self.settings["auto_roster"] = {"enabled": self.var_auto_roster.get(), "interval": self.opt_roster_int.get(), "start": self.opt_roster_start.get()}
         self.settings["auto_excel"] = {"enabled": self.var_auto_excel.get(), "interval": self.opt_excel_int.get()}
