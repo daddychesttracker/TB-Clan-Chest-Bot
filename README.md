@@ -8,6 +8,16 @@ if you get an SSL error when trying to run, add this to imports in main_gui.py
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
+- Added GPU support for NVIDIA with easyOCR. Start program select use GPU in calibration tab then follow these steps.
+
+pip uninstall torch torchvision torchaudio
+
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+- Added support to swap account profiles. Update the tbprofile_id.png in assets with a screenshot of the name of the account in the account tab in game that you are using this on. 
+if you are on a different profile when the automation starts, when it checks check_profile.png and gets a not valid profile it will navigate to accounts and select the correct one and resume the task it was meant to.
+
+
 
 1. Install requirements - pip install -r requirements.txt
 
